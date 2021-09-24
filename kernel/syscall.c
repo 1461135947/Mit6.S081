@@ -104,7 +104,8 @@ extern uint64 sys_unlink(void);
 extern uint64 sys_wait(void);
 extern uint64 sys_write(void);
 extern uint64 sys_uptime(void);
-
+extern uint64 sys_trace(void);
+extern uint64 sys_sysinfo(void);
 static uint64 (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
 [SYS_exit]    sys_exit,
@@ -127,10 +128,64 @@ static uint64 (*syscalls[])(void) = {
 [SYS_link]    sys_link,
 [SYS_mkdir]   sys_mkdir,
 [SYS_close]   sys_close,
+[SYS_trace]   sys_trace,
+[SYS_sysinfo]   sys_sysinfo,
 };
 
-void
-syscall(void)
+// 根据系统调用编号获取系统调用名
+char *syscallName(int num){
+    switch (num)
+    {
+      case SYS_fork:
+        return "fork"; 
+      case SYS_exit:
+        return "exit";
+      case SYS_wait:
+        return "wait";
+      case SYS_pipe:
+        return "pipe";
+      case SYS_read:
+        return "read";   
+      case SYS_kill:
+        return "kill";    
+      case SYS_exec:
+        return "exec";    
+      case SYS_fstat:
+        return "fstat";
+      case SYS_chdir:
+        return "chdir";
+      case SYS_dup:
+        return "dup";
+      case SYS_getpid:
+        return "getpid";
+      case SYS_sbrk:
+        return "sbrk";
+      case SYS_sleep:
+        return "sleep";
+      case SYS_uptime:
+        return "uptime";
+      case SYS_open:
+        return "open";
+      case SYS_write:
+        return "write"; 
+      case SYS_mknod:
+        return "mknod";
+      case SYS_unlink:
+        return "unlink"; 
+      case SYS_link:
+        return "link"; 
+      case SYS_mkdir:
+        return "mkdir";
+      case SYS_close:
+        return "close";
+      case SYS_trace:
+        return "trace";                                                        
+      default:
+        return 0;
+        break;
+    }
+}
+void syscall(void)
 {
   int num;
   struct proc *p = myproc();
@@ -142,5 +197,11 @@ syscall(void)
     printf("%d %s: unknown sys call %d\n",
             p->pid, p->name, num);
     p->trapframe->a0 = -1;
+  }
+  // 检查该系统调用是否被追踪
+  int mask=1<<num;
+  uint64 ret=p->trapframe->a0;
+  if(mask&p->mask){
+    printf("%d: syscall %s -> %d\n",p->pid,syscallName(num),ret);
   }
 }
