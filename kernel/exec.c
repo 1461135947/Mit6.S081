@@ -74,6 +74,10 @@ exec(char *path, char **argv)
   uvmclear(pagetable, sz-2*PGSIZE);
   sp = sz;
   stackbase = sp - PGSIZE;
+  pagetable_t tmp=p->pagetable;
+  p->pagetable=pagetable;
+  pagetablemap(p,0,sz);
+  p->pagetable=tmp;
 
   // Push argument strings, prepare rest of stack in ustack.
   for(argc = 0; argv[argc]; argc++) {
@@ -116,6 +120,11 @@ exec(char *path, char **argv)
   p->trapframe->sp = sp; // initial stack pointer
   proc_freepagetable(oldpagetable, oldsz);
 
+  if(p->pid==1){
+    printf("page table %p\n",p->pagetable);
+    vmprint(p->pagetable,1);
+  } 
+    
   return argc; // this ends up in a0, the first argument to main(argc, argv)
 
  bad:

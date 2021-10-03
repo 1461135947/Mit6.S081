@@ -5,14 +5,15 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
-
+#include "proc.h"
 /*
  * the kernel's page table.
  */
 pagetable_t kernel_pagetable;
 
+extern int copyin_new(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len);
+extern int copyinstr_new(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max);
 extern char etext[];  // kernel.ld sets this to end of kernel code.
-
 extern char trampoline[]; // trampoline.S
 
 /*
@@ -21,6 +22,7 @@ extern char trampoline[]; // trampoline.S
 void
 kvminit()
 {
+
   kernel_pagetable = (pagetable_t) kalloc();
   memset(kernel_pagetable, 0, PGSIZE);
 
@@ -79,8 +81,11 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
     if(*pte & PTE_V) {
       pagetable = (pagetable_t)PTE2PA(*pte);
     } else {
-      if(!alloc || (pagetable = (pde_t*)kalloc()) == 0)
+      if(!alloc || (pagetable = (pde_t*)kalloc()) == 0){
+        
         return 0;
+      }
+        
       memset(pagetable, 0, PGSIZE);
       *pte = PA2PTE(pagetable) | PTE_V;
     }
@@ -132,11 +137,12 @@ kvmpa(uint64 va)
   pte_t *pte;
   uint64 pa;
   
-  pte = walk(kernel_pagetable, va, 0);
+  pte = walk(myproc()->kpagetable, va, 0);
+  // pte=walk(kernel_pagetable, va, 0);
   if(pte == 0)
-    panic("kvmpa");
+    panic("pte==0 kvmpa");
   if((*pte & PTE_V) == 0)
-    panic("kvmpa");
+    panic("pte_V  kvmpa");
   pa = PTE2PA(*pte);
   return pa+off;
 }
@@ -379,23 +385,25 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 int
 copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 {
-  uint64 n, va0, pa0;
+  // uint64 n, va0, pa0;
 
-  while(len > 0){
-    va0 = PGROUNDDOWN(srcva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
-      return -1;
-    n = PGSIZE - (srcva - va0);
-    if(n > len)
-      n = len;
-    memmove(dst, (void *)(pa0 + (srcva - va0)), n);
+  // while(len > 0){
+  //   va0 = PGROUNDDOWN(srcva);
+  //   pa0 = walkaddr(pagetable, va0);
+  //   if(pa0 == 0)
+  //     return -1;
+  //   n = PGSIZE - (srcva - va0);
+  //   if(n > len)
+  //     n = len;
+  //   memmove(dst, (void *)(pa0 + (srcva - va0)), n);
 
-    len -= n;
-    dst += n;
-    srcva = va0 + PGSIZE;
-  }
-  return 0;
+  //   len -= n;
+  //   dst += n;
+  //   srcva = va0 + PGSIZE;
+  // }
+  // return 0;
+  return copyin_new(pagetable,dst,srcva,len);
+  
 }
 
 // Copy a null-terminated string from user to kernel.
@@ -405,38 +413,65 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 int
 copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 {
-  uint64 n, va0, pa0;
-  int got_null = 0;
+  // uint64 n, va0, pa0;
+  // int got_null = 0;
 
-  while(got_null == 0 && max > 0){
-    va0 = PGROUNDDOWN(srcva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
-      return -1;
-    n = PGSIZE - (srcva - va0);
-    if(n > max)
-      n = max;
+  // while(got_null == 0 && max > 0){
+  //   va0 = PGROUNDDOWN(srcva);
+  //   pa0 = walkaddr(pagetable, va0);
+  //   if(pa0 == 0)
+  //     return -1;
+  //   n = PGSIZE - (srcva - va0);
+  //   if(n > max)
+  //     n = max;
 
-    char *p = (char *) (pa0 + (srcva - va0));
-    while(n > 0){
-      if(*p == '\0'){
-        *dst = '\0';
-        got_null = 1;
-        break;
-      } else {
-        *dst = *p;
-      }
-      --n;
-      --max;
-      p++;
-      dst++;
-    }
+  //   char *p = (char *) (pa0 + (srcva - va0));
+  //   while(n > 0){
+  //     if(*p == '\0'){
+  //       *dst = '\0';
+  //       got_null = 1;
+  //       break;
+  //     } else {
+  //       *dst = *p;
+  //     }
+  //     --n;
+  //     --max;
+  //     p++;
+  //     dst++;
+  //   }
 
-    srcva = va0 + PGSIZE;
+  //   srcva = va0 + PGSIZE;
+  // }
+  // if(got_null){
+  //   return 0;
+  // } else {
+  //   return -1;
+  // }
+  // return 0;
+  return copyinstr_new(pagetable,dst,srcva,max);
+}
+
+void vmprint(pagetable_t pt,int level)
+{
+  // there are 2^9 = 512 PTEs in a page table.
+  int index=0;
+  char ch[10];
+  for(int i=0;i<level;i++){
+    ch[index++]='.';
+    ch[index++]='.';
+    ch[index++]=' ';
   }
-  if(got_null){
-    return 0;
-  } else {
-    return -1;
+  ch[index-1]='\0';
+  for(int i = 0; i < 512; i++){
+    pte_t pte = pt[i];
+    if((pte & PTE_V)){
+      uint64 child = PTE2PA(pte);
+      //打印所有信息
+      printf("%s%d: pte %p pa %p\n",ch,i,pte,child);
+      if(level<=2)
+        vmprint((pagetable_t)child,level+1);
+      
+    } 
   }
+  
 }

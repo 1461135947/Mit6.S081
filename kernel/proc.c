@@ -14,8 +14,10 @@ struct proc *initproc;
 
 int nextpid = 1;
 struct spinlock pid_lock;
-
+extern char etext[];
 extern void forkret(void);
+extern pagetable_t kernel_pagetable;
+extern pte_t *walk(pagetable_t pagetable, uint64 va, int alloc);
 static void wakeup1(struct proc *chan);
 static void freeproc(struct proc *p);
 
@@ -30,16 +32,19 @@ procinit(void)
   initlock(&pid_lock, "nextpid");
   for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
+      p->kpagetable=0;
 
       // Allocate a page for the process's kernel stack.
       // Map it high in memory, followed by an invalid
       // guard page.
-      char *pa = kalloc();
-      if(pa == 0)
-        panic("kalloc");
-      uint64 va = KSTACK((int) (p - proc));
-      kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
-      p->kstack = va;
+    char *pa = kalloc();
+    if(pa == 0)
+      panic("kalloc");
+      // 生成内核栈地址
+    uint64 va = KSTACK((int) (p - proc));
+    kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
+    p->kstack = va;
+      
   }
   kvminithart();
 }
@@ -84,6 +89,67 @@ allocpid() {
 
   return pid;
 }
+void kvmmap_proc(struct proc *p,uint64 va, uint64 pa, uint64 sz, int perm){
+  if(mappages(p->kpagetable, va, sz, pa, perm) != 0)
+  {
+    int mem=getfreemem();
+    printf("%p %p 空闲内存%d\n",va,pa,mem);
+    panic("kvmmap_proc");
+  }
+    
+}
+
+int kvminit_modify(struct proc *p)
+{
+  
+  // 先给每个进程分配内核页表
+  p->kpagetable = (pagetable_t) kalloc();
+  if(p->kpagetable==0){
+    return 0;
+  }
+  memset(p->kpagetable, 0, PGSIZE);
+  // 内核页表初始化工作
+  // uart registers
+  kvmmap_proc(p,UART0, UART0, PGSIZE, PTE_R | PTE_W);
+
+  // virtio mmio disk interface
+  kvmmap_proc(p,VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
+
+  // CLINT
+  kvmmap_proc(p,CLINT, CLINT, 0x10000, PTE_R | PTE_W);
+
+  // PLIC
+  kvmmap_proc(p,PLIC, PLIC, 0x400000, PTE_R | PTE_W);
+  
+  // map kernel text executable and read-only.
+  kvmmap_proc(p,KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_X);
+
+  // map kernel data and the physical RAM we'll make use of.
+  kvmmap_proc(p,(uint64)etext, (uint64)etext, PHYSTOP-(uint64)etext, PTE_R | PTE_W);
+
+  // map the trampoline for trap entry/exit to
+  // the highest virtual address in the kernel.
+  kvmmap_proc(p,TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+
+  
+  
+  uint64 va = KSTACK((int) (p-proc));
+  
+  // 将内核页表上的内核栈拷贝到进程的内核页表上
+  pte_t *pte=walk(kernel_pagetable,va,0);
+  if(pte==0){
+    panic("copy kernal stack error");
+  }
+  uint64 child = PTE2PA(*pte);
+  
+  
+  if(mappages(p->kpagetable, va, PGSIZE,(uint64)child,  PTE_R | PTE_W) != 0)
+    panic("kvminit_modify");
+  p->kstack = va;
+  // vmprint(p->kpagetable,1);
+  return 1;
+  
+}
 
 // Look in the process table for an UNUSED proc.
 // If found, initialize state required to run in the kernel,
@@ -120,7 +186,13 @@ found:
     release(&p->lock);
     return 0;
   }
+  if(kvminit_modify(p)==0){
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
 
+  
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
@@ -130,17 +202,51 @@ found:
   return p;
 }
 
+//释放三级页表所占用的资源
+void proc_freekpt(pagetable_t pagetable)
+{
+  
+  // there are 2^9 = 512 PTEs in a page table.
+  for(int i = 0; i < 512; i++){
+    pte_t pte = pagetable[i];
+    if((pte & PTE_V)){
+      
+      if ((pte & (PTE_R|PTE_W|PTE_X)) == 0)
+      {
+        uint64 child = PTE2PA(pte);
+        proc_freekpt((pagetable_t)child);
+      }
+      pagetable[i] = 0;
+    } 
+  }
+  kfree((void*)pagetable);
+}
 // free a proc structure and the data hanging from it,
 // including user pages.
 // p->lock must be held.
 static void
 freeproc(struct proc *p)
 {
+  // 先删除内核页表中的内核栈
+  // 删除kernel stack
+  // if (p->kstack)
+  // {
+  //   pte_t* pte = walk(p->kpagetable, p->kstack, 0);
+  //   if (pte == 0)
+  //     panic("freeproc: kstack");
+  //   kfree((void*)PTE2PA(*pte));
+  // }
+  // 释放进程的内核页表
+  if(p->kpagetable)
+    proc_freekpt(p->kpagetable);
+    
+
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
+
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -220,7 +326,7 @@ userinit(void)
   // and data into it.
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
-
+  pagetablemap(p,0,p->sz);
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
   p->trapframe->sp = PGSIZE;  // user stack pointer
@@ -243,10 +349,15 @@ growproc(int n)
 
   sz = p->sz;
   if(n > 0){
+    // 不能覆盖PLIC地址空间
+    if (PGROUNDUP(sz + n) >= PLIC)
+      return -1;
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
+    pagetablemap(p,sz-n,sz);
   } else if(n < 0){
+    pagetablemap(p,sz,sz+n);
     sz = uvmdealloc(p->pagetable, sz, sz + n);
   }
   p->sz = sz;
@@ -288,7 +399,7 @@ fork(void)
     if(p->ofile[i])
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
-
+  pagetablemap(np,0,np->sz);
   safestrcpy(np->name, p->name, sizeof(p->name));
 
   pid = np->pid;
@@ -473,10 +584,24 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+        // pagetable_t tmp=kernel_pagetable;
+        // 将进程的内核页表切换到satp寄存器上并且刷新TLB
+        if(p->kpagetable!=0){
+          // kernel_pagetable=p->kpagetable;
+          w_satp(MAKE_SATP(p->kpagetable));
+          sfence_vma();
+        }
+        
         swtch(&c->context, &p->context);
+        //没有进程运行时使用内核页表
+        w_satp(MAKE_SATP(kernel_pagetable));
+        sfence_vma();
 
+       
+      
         // Process is done running for now.
         // It should have changed its p->state before coming back.
+        // kernel_pagetable=tmp;
         c->proc = 0;
 
         found = 1;
@@ -486,6 +611,7 @@ scheduler(void)
 #if !defined (LAB_FS)
     if(found == 0) {
       intr_on();
+       
       asm volatile("wfi");
     }
 #else
@@ -696,4 +822,34 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+// 将进程中的用户页表映射到内核页表
+void pagetablemap(struct proc *p,uint64 oldsize,uint64 newsize){
+  if(newsize<oldsize){
+    if(PGROUNDUP(newsize) < PGROUNDUP(oldsize)){
+    int npages = (PGROUNDUP(oldsize) - PGROUNDUP(newsize)) / PGSIZE;
+    uvmunmap(p->kpagetable, PGROUNDUP(newsize), npages, 0);
+  }
+    return;
+  }
+  pte_t *pte_from,*pte_to;
+  uint64 va,pa,falg;
+  
+  va=PGROUNDUP(oldsize);
+  newsize=PGROUNDUP(newsize);
+  for(;va<newsize;va+=PGSIZE){
+    if((pte_from=walk(p->pagetable,va,0))==0){
+      panic("pagetablemap pte_from");
+    }
+    // 在内核页表中生成一个新的PTE
+    if((pte_to=walk(p->kpagetable,va,1))==0){
+      panic("pagetablemap pte_to");
+    }
+    pa=PTE2PA(*pte_from);
+    //将用户态的标志清除
+    falg=(PTE_FLAGS(*pte_from)& (~PTE_U));
+    *pte_to=PA2PTE(pa)|falg;
+  }
+
 }

@@ -67,6 +67,7 @@ void            ramdiskrw(struct buf*);
 void*           kalloc(void);
 void            kfree(void *);
 void            kinit(void);
+uint64          getfreemem();
 
 // log.c
 void            initlog(int, struct superblock*);
@@ -84,6 +85,7 @@ int             pipewrite(struct pipe*, uint64, int);
 void            printf(char*, ...);
 void            panic(char*) __attribute__((noreturn));
 void            printfinit(void);
+void            vmprint(pagetable_t pt,int level);   
 
 // proc.c
 int             cpuid(void);
@@ -91,7 +93,8 @@ void            exit(int);
 int             fork(void);
 int             growproc(int);
 pagetable_t     proc_pagetable(struct proc *);
-void            proc_freepagetable(pagetable_t, uint64);
+void proc_freepagetable(pagetable_t pagetable, uint64 sz);
+void            pagetablemap(struct proc *p,uint64 oldsize,uint64 newsize);
 int             kill(int);
 struct cpu*     mycpu(void);
 struct cpu*     getmycpu(void);
