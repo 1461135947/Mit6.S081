@@ -1,0 +1,8 @@
+使用寄存器a1-a7这些寄存器用于保存函数参数；其中a2寄存器保存13
+52是main调用f；34是f调用g
+a38是printf函数的位置
+ra的值是4200
+输出HE110 Worldusertrap(): unexpected scause 0x000000000000000d pid=4
+            sepc=0x000000000000008c stval=0x0000000000003f98
+输出x=3 y=7368usertrap(): unexpected scause 0x000000000000000d pid=3
+            sepc=0x000000000000008c stval=0x0000000000003f98

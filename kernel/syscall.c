@@ -7,10 +7,13 @@
 #include "syscall.h"
 #include "defs.h"
 
+
+uint64 exec_handler=0;
 // Fetch the uint64 at addr from the current process.
 int
 fetchaddr(uint64 addr, uint64 *ip)
 {
+  
   struct proc *p = myproc();
   if(addr >= p->sz || addr+sizeof(uint64) > p->sz)
     return -1;
@@ -83,6 +86,62 @@ argstr(int n, char *buf, int max)
   return fetchstr(addr, buf, max);
 }
 
+uint64 sys_sigalarm(void){
+  int ticks;
+  uint64 handler;
+  if(argint(0,&ticks)<0)
+    return -1;
+  if(argaddr(1,&handler)<0)
+    return -1;
+  myproc()->alarm_interval=ticks;
+  myproc()->alarm_handler=handler;
+  myproc()->since_last_handler=0;
+
+  return 0;
+}
+
+uint64 sys_sigreturn(void){
+  struct proc *p=myproc();
+  // 恢复调用者寄存器
+  p->since_last_handler=0;
+  p->trapframe->epc=p->saveframe->epc;
+  p->trapframe->ra=p->saveframe->ra;
+  exec_handler=0;
+  
+  // p->trapframe->t0=p->saveframe->t0;
+  // p->trapframe->t1=p->saveframe->t1;
+  // p->trapframe->t2=p->saveframe->t2;
+  // p->trapframe->t3=p->saveframe->t3;
+  // p->trapframe->t4=p->saveframe->t4;
+  // p->trapframe->t5=p->saveframe->t5;
+  // p->trapframe->t6=p->saveframe->t6;
+
+  // p->trapframe->a0=p->saveframe->a0;
+  p->trapframe->a1=p->saveframe->a1;
+  // p->trapframe->a2=p->saveframe->a2;
+  // p->trapframe->a3=p->saveframe->a3;
+  // p->trapframe->a4=p->saveframe->a4;
+  // p->trapframe->a5=p->saveframe->a5;
+  // p->trapframe->a6=p->saveframe->a6;
+  // p->trapframe->a7=p->saveframe->a7;
+  
+  p->trapframe->s0=p->saveframe->s0;
+  p->trapframe->s1=p->saveframe->s1;
+  p->trapframe->s2=p->saveframe->s2;
+  p->trapframe->s3=p->saveframe->s3;
+  p->trapframe->s4=p->saveframe->s4;
+  p->trapframe->s5=p->saveframe->s5;
+  p->trapframe->s6=p->saveframe->s6;
+  p->trapframe->s7=p->saveframe->s7;
+  p->trapframe->s8=p->saveframe->s8;
+  p->trapframe->s9=p->saveframe->s9;
+  p->trapframe->s10=p->saveframe->s10;
+  p->trapframe->s11=p->saveframe->s11;
+  p->trapframe->sp=p->saveframe->sp;
+  
+  
+  return 0;
+}
 extern uint64 sys_chdir(void);
 extern uint64 sys_close(void);
 extern uint64 sys_dup(void);
@@ -127,6 +186,8 @@ static uint64 (*syscalls[])(void) = {
 [SYS_link]    sys_link,
 [SYS_mkdir]   sys_mkdir,
 [SYS_close]   sys_close,
+[SYS_sigalarm] sys_sigalarm,
+[SYS_sigreturn] sys_sigreturn,
 };
 
 void

@@ -8,8 +8,10 @@
 
 struct spinlock tickslock;
 uint ticks;
+extern uint64 exec_handler;
 
 extern char trampoline[], uservec[], userret[];
+extern pagetable_t kernel_pagetable;
 
 // in kernelvec.S, calls kerneltrap().
 void kernelvec();
@@ -75,10 +77,68 @@ usertrap(void)
 
   if(p->killed)
     exit(-1);
-
+  
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
+  if(which_dev == 2){
+    
+    p->since_last_handler=p->since_last_handler+1;
+    if(p->alarm_interval!=0){
+      
+      if(p->since_last_handler>=p->alarm_interval){ 
+        
+        
+        
+        if(exec_handler==0){
+            // 保存调用者寄存器
+        
+        p->saveframe->ra=p->trapframe->ra;
+        p->saveframe->epc=p->trapframe->epc;
+        // p->saveframe->t0=p->trapframe->t0;
+        // p->saveframe->t1=p->trapframe->t1;
+        // p->saveframe->t2=p->trapframe->t2;
+        // p->saveframe->t3=p->trapframe->t3;
+        // p->saveframe->t4=p->trapframe->t4;
+        // p->saveframe->t5=p->trapframe->t5;
+        // p->saveframe->t6=p->trapframe->t6;
+
+        // p->saveframe->a0=p->trapframe->a0;
+        p->saveframe->a1=p->trapframe->a1;
+        // p->saveframe->a2=p->trapframe->a2;
+        // p->saveframe->a3=p->trapframe->a3;
+        // p->saveframe->a4=p->trapframe->a4;
+        // p->saveframe->a5=p->trapframe->a5;
+        // p->saveframe->a6=p->trapframe->a6;
+        // p->saveframe->a7=p->trapframe->a7;
+        p->saveframe->sp=p->trapframe->sp;
+        p->saveframe->s0=p->trapframe->s0;
+        p->saveframe->s1=p->trapframe->s1;
+        p->saveframe->s2=p->trapframe->s2;
+        p->saveframe->s3=p->trapframe->s3;
+        p->saveframe->s4=p->trapframe->s4;
+        p->saveframe->s5=p->trapframe->s5;
+        p->saveframe->s6=p->trapframe->s6;
+        p->saveframe->s7=p->trapframe->s7;
+        p->saveframe->s8=p->trapframe->s8;
+        p->saveframe->s9=p->trapframe->s9;
+        p->saveframe->s10=p->trapframe->s10;
+        p->saveframe->s11=p->trapframe->s11;
+        
+
+
+
+        p->trapframe->epc=p->alarm_handler;
+        exec_handler=p->alarm_handler;
+        }
+        
+        
+        
+        
+        
+      }
+    }
+    
     yield();
+  }
 
   usertrapret();
 }

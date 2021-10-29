@@ -126,6 +126,21 @@ panic(char *s)
     ;
 }
 
+void _backtrace(uint64 addr){
+  printf("%p\n",*((uint64 *)(addr-8)));
+  uint64 pre_addr=*((uint64 *)(addr-16));
+  //新获取的栈帧仍然在分配的栈的页表范围内
+  if(PGROUNDDOWN(addr)==PGROUNDDOWN(pre_addr)&&PGROUNDUP(addr)==PGROUNDUP(pre_addr)){
+    _backtrace(pre_addr);
+  }
+}
+void backtrace(){
+  printf("backtrace:\n");
+  // 获取当前栈的栈帧
+  uint64 addr=r_fp();
+  _backtrace(addr);
+}
+
 void
 printfinit(void)
 {

@@ -42,8 +42,10 @@ periodic()
 void
 test0()
 {
-  int i;
+  uint64 i;
   printf("test0 start\n");
+  // uint64 va=(uint64)periodic;
+  // uint64 pa=
   count = 0;
   sigalarm(2, periodic);
   for(i = 0; i < 1000*500000; i++){

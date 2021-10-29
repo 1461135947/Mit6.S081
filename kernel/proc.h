@@ -99,8 +99,12 @@ struct proc {
   uint64 sz;                   // Size of process memory (bytes)
   pagetable_t pagetable;       // User page table
   struct trapframe *trapframe; // data page for trampoline.S
+  struct trapframe *saveframe;  //在调用handler函数前保存用户空间当前函数的调用者寄存器     
   struct context context;      // swtch() here to run process
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+  int alarm_interval;          //alarm interval
+  uint64 alarm_handler;       //alarm handler
+  int since_last_handler;             //距离上次alarm handler调用经过的时间;以ticks计数
 };
