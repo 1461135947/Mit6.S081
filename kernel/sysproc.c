@@ -41,15 +41,26 @@ sys_wait(void)
 uint64
 sys_sbrk(void)
 {
-  int addr;
+  // int addr;
   int n;
-
+  
   if(argint(0, &n) < 0)
     return -1;
-  addr = myproc()->sz;
-  if(growproc(n) < 0)
-    return -1;
-  return addr;
+  uint64 res=myproc()->sz;
+  myproc()->sz=res+n;
+  if(n<0){
+    // sbrk 回收溢出
+    if(myproc()->sz>res){
+      myproc()->sz=res;
+      return res;
+    }
+    if(PGROUNDUP(res+n) < PGROUNDUP(res)){
+      int npages = (PGROUNDUP(res) - PGROUNDUP(res+n)) / PGSIZE;
+      uvmunmap(myproc()->pagetable, PGROUNDUP(res+n), npages, 1);
+    }
+
+  }
+  return res;
 }
 
 uint64

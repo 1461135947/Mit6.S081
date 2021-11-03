@@ -10,10 +10,9 @@ struct spinlock tickslock;
 uint ticks;
 
 extern char trampoline[], uservec[], userret[];
-
 // in kernelvec.S, calls kerneltrap().
 void kernelvec();
-
+// extern char end[];
 extern int devintr();
 
 void
@@ -65,14 +64,47 @@ usertrap(void)
     intr_on();
 
     syscall();
+    // 判断是否是时钟中断或者时设备中断
   } else if((which_dev = devintr()) != 0){
     // ok
+    // 其他类型错误
   } else {
+    uint64 scause=r_scause();
+    // 页错误
+    if(scause==13||scause==15){
+      
+      uint64 stval=r_stval();
+      // 处理虚拟地址在栈下面
+      if(stval<PGROUNDDOWN(myproc()->trapframe->sp)){
+        exit(-1);
+      }
+      // 造成缺页的虚拟地址超过分配的虚拟地址范围
+      if(stval>myproc()->sz){
+        exit(-1);
+      }
+      // 获取造成页错误的虚拟地址;并且按页向下取整
+      stval=PGROUNDDOWN(stval);
+      
+      char *mem = kalloc();
+      if(mem == 0){
+        //panic("分配物理内存失败\n");
+        exit(-1);
+      }
+      memset(mem, 0, PGSIZE);
+      // printf("%p %p %p\n",(uint64)mem,(uint64)end,PHYSTOP);
+      if(mappages(myproc()->pagetable, stval, PGSIZE, (uint64)mem, PTE_W|PTE_X|PTE_R|PTE_U) != 0){
+        //panic("映射失败\n");
+        kfree(mem);
+        
+        exit(-1);
+      }
+     goto end;
+    }
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;
   }
-
+end:
   if(p->killed)
     exit(-1);
 
@@ -148,7 +180,6 @@ kerneltrap()
     printf("sepc=%p stval=%p\n", r_sepc(), r_stval());
     panic("kerneltrap");
   }
-
   // give up the CPU if this is a timer interrupt.
   if(which_dev == 2 && myproc() != 0 && myproc()->state == RUNNING)
     yield();

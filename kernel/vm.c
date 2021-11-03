@@ -5,6 +5,8 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
 
 /*
  * the kernel's page table.
@@ -181,9 +183,14 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 
   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
     if((pte = walk(pagetable, a, 0)) == 0)
-      panic("uvmunmap: walk");
-    if((*pte & PTE_V) == 0)
-      panic("uvmunmap: not mapped");
+      continue;
+      // panic("uvmunmap: walk");
+    // 没有映射页面直接跳过
+    if((*pte & PTE_V) == 0){
+      *pte=0;
+      continue;
+    }
+     
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
     if(do_free){
@@ -315,9 +322,10 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
-      panic("uvmcopy: pte should exist");
+      continue;
+      // panic("uvmcopy: pte should exist");
     if((*pte & PTE_V) == 0)
-      panic("uvmcopy: page not present");
+      continue;
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
     if((mem = kalloc()) == 0)
@@ -359,8 +367,21 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
     pa0 = walkaddr(pagetable, va0);
+    pte_t *pte;
     if(pa0 == 0)
-      return -1;
+    {
+      if(dstva+len>(myproc()->sz)||dstva>myproc()->sz){
+        return -1;
+      }
+        if((pte = walk(pagetable, va0, 1)) == 0)
+          exit(-1);
+        pa0=(uint64)kalloc();
+        if(pa0==0)
+          exit(-1);
+        memset((void *)pa0,0,PGSIZE);
+        
+        *pte=PA2PTE(pa0)|PTE_V|PTE_W|PTE_X|PTE_X|PTE_U;
+    }
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;
@@ -384,8 +405,23 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
   while(len > 0){
     va0 = PGROUNDDOWN(srcva);
     pa0 = walkaddr(pagetable, va0);
+    pte_t *pte;
     if(pa0 == 0)
-      return -1;
+    {
+      if(srcva>(myproc()->sz)||srcva+len>myproc()->sz){
+        return -1;
+      }
+        if((pte = walk(pagetable, va0, 1)) == 0)
+          exit(-1);
+        pa0=(uint64)kalloc();
+         if(pa0==0)
+          exit(-1);
+        memset((void *)pa0,0,PGSIZE);
+
+        *pte=PA2PTE(pa0)|PTE_V|PTE_W|PTE_X|PTE_X|PTE_U;
+        
+    }
+      // return -1;
     n = PGSIZE - (srcva - va0);
     if(n > len)
       n = len;
