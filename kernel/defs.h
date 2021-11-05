@@ -63,6 +63,9 @@ void            ramdiskrw(struct buf*);
 void*           kalloc(void);
 void            kfree(void *);
 void            kinit(void);
+int add_page_reference(uint64 addr,int count);
+int get_page_reference(uint64 addr);
+void set_page_reference(uint64 addr,int val);
 
 // log.c
 void            initlog(int, struct superblock*);

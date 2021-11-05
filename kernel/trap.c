@@ -7,8 +7,9 @@
 #include "defs.h"
 
 struct spinlock tickslock;
+extern struct spinlock big_mutex;
 uint ticks;
-
+extern pte_t *walk(pagetable_t pagetable, uint64 va, int alloc);
 extern char trampoline[], uservec[], userret[];
 
 // in kernelvec.S, calls kerneltrap().
@@ -68,9 +69,48 @@ usertrap(void)
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
-    printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
-    printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
-    p->killed = 1;
+    uint64 scause=r_scause();
+    if(scause==13||scause==15){
+      uint64 stval=r_stval(); 
+      // 先找到引发页错误的页表项
+      pte_t *pte=walk(myproc()->pagetable,stval,0);
+      
+      if(pte==0){
+        exit(-1);
+      }
+      // 如果没有设置COW位直接退出
+      if((*pte & PTE_COW)==0){
+        exit(-1);
+      }
+      acquire(&big_mutex);
+      if(get_page_reference((uint64)(PTE2PA(*pte)))==1){
+        // 引用计数为1的页面直接修改权限即可
+        *pte=*pte | PTE_W;
+        *pte=*pte &(~PTE_COW);
+      }else{
+          // 分配新的物理页
+        char *mem=kalloc();
+        if(mem==0){
+          release(&big_mutex);
+          exit(-1);
+          // panic("usertrap kalloc alloca memory fail");
+        }
+        memmove(mem,(char *)(PTE2PA(*pte)),PGSIZE);
+        // 将共享页面的应用计数减一
+        add_page_reference((uint64)PTE2PA(*pte),-1);
+        
+        // 将页表项修改成新的页表项
+        *pte=PA2PTE((uint64)mem) |PTE_FLAGS(*pte)|PTE_W;
+        *pte=*pte & (~PTE_COW);
+      }
+      release(&big_mutex);
+      
+    }else{
+      printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
+      printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+      p->killed = 1;
+    }
+    
   }
 
   if(p->killed)

@@ -5,14 +5,15 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
 
 /*
  * the kernel's page table.
  */
 pagetable_t kernel_pagetable;
-
+extern struct spinlock big_mutex;
 extern char etext[];  // kernel.ld sets this to end of kernel code.
-
 extern char trampoline[]; // trampoline.S
 
 /*
@@ -310,27 +311,30 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 {
   pte_t *pte;
   uint64 pa, i;
-  uint flags;
-  char *mem;
-
+  acquire(&big_mutex);
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
-    pa = PTE2PA(*pte);
-    flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+    //取消物理页的写权限 
+    *pte=(*pte) &(~PTE_W);
+    *pte=(*pte) | PTE_COW;
+    uint64 flags=PTE_FLAGS(*pte)&(~PTE_W);
+    pa=PTE2PA(*pte);
+    
+    add_page_reference(pa,1);
+    
+    
+    if(mappages(new, i, PGSIZE,pa, flags) != 0){
       goto err;
     }
   }
+  release(&big_mutex);
   return 0;
 
  err:
+ release(&big_mutex);
   uvmunmap(new, 0, i / PGSIZE, 1);
   return -1;
 }
@@ -358,7 +362,39 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
-    pa0 = walkaddr(pagetable, va0);
+    if(va0>MAXVA)
+      return -1;
+    pte_t *pte=walk(pagetable,va0,0);
+
+    if(pte==0||PTE2PA(*pte)==0){
+      return -1;
+    }
+    if((*pte&PTE_COW)==0&&(*pte&PTE_W)==0){
+      exit(-1);
+    }
+    acquire(&big_mutex);
+    if(get_page_reference((uint64)(PTE2PA(*pte)))==1){
+      // 引用计数为1的页面直接修改权限即可
+      *pte=*pte | PTE_W;
+    }else{
+        // 分配新的物理页
+      char *mem=kalloc();
+      if(mem==0){
+        release(&big_mutex);
+        exit(-1);
+        // panic("write kalloc alloca memory fail");
+      } 
+      memmove(mem,(char *)(PTE2PA(*pte)),PGSIZE);
+      // 将共享页面的应用计数减一
+      
+      add_page_reference((uint64)PTE2PA(*pte),-1);
+      
+      // 将页表项修改成新的页表项
+      *pte=PA2PTE((uint64)mem) |PTE_FLAGS(*pte)|PTE_W;
+     
+    }
+    release(&big_mutex);
+    pa0=PTE2PA(*pte);
     if(pa0 == 0)
       return -1;
     n = PGSIZE - (dstva - va0);
