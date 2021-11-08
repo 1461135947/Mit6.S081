@@ -29,10 +29,30 @@ barrier()
   //
   // Block until all threads have called barrier() and
   // then increment bstate.round.
-  //
+  
+  pthread_mutex_lock(&bstate.barrier_mutex);
+  bstate.nthread+=1;//对当前round调用barrier的线程进行计数
+  // pthread_cond_wait和 pthread_cond_broadcast基本功能与sleep和wakeup一致
+  // pthread_cond_wait将mutex释放，并在cond上睡眠/等待 如果调用 pthread_cond_broadcast(&cond)则返回 返回之前获取mutex  
+  // pthread_cond_broadcast唤醒所有在cond上睡眠/等待的线程
+  if(bstate.nthread<nthread)
+  {
+     pthread_cond_wait(&bstate.barrier_cond,&bstate.barrier_mutex);//go to sleep on cond,releasing lock mutes acquirint upon wake up
+  }
+  else//所有线程都已调用barrier
+  {   
+      //这里的主要挑战是前一轮某个线程退出之后，其它在上一轮的线程可能使用错误的bstate.nthread进行判断
+      //这里的解决方案是由于mutex的存在，一个线程只有在其它线程调用pthread_cond_wait进入睡眠之后才能获得mutex
+      //这样才能将bstate.nthread+1 而接下来判断完if(bstate.nthread<nthread)之后 bstate.nthread的值不会影响当前线程了
+      //注意if(bstate.nthread<nthread)之后才调用pthread_cond_wait 那么一个线程进入下一round也就意味着当前round都调用过pthread_cond_wait了
+      // 只有这样才会调用pthread_cond_broadcast唤醒，那么下一轮修改bstate.nthread也就不会影响当前轮的结果了
+      bstate.round+=1;//进入下一个round 
+      bstate.nthread=0;//下一round的 bstate.nthread清零
+      pthread_cond_broadcast(&bstate.barrier_cond); // wake up every thread sleeping on cond
+  }
+  pthread_mutex_unlock(&bstate.barrier_mutex);
   
 }
-
 static void *
 thread(void *xa)
 {

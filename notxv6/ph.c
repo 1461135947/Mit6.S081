@@ -7,7 +7,7 @@
 
 #define NBUCKET 5
 #define NKEYS 100000
-
+pthread_mutex_t locks[NBUCKET];
 struct entry {
   int key;
   int value;
@@ -42,10 +42,13 @@ void put(int key, int value)
 
   // is the key already present?
   struct entry *e = 0;
+
   for (e = table[i]; e != 0; e = e->next) {
     if (e->key == key)
       break;
   }
+
+  pthread_mutex_lock(&locks[i]);
   if(e){
     // update the existing key.
     e->value = value;
@@ -53,6 +56,8 @@ void put(int key, int value)
     // the new is new.
     insert(key, value, &table[i], table[i]);
   }
+  pthread_mutex_unlock(&locks[i]);
+
 }
 
 static struct entry*
